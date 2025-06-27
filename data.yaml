@@ -1,0 +1,4 @@
+path: data/training
+train: images/train
+val: images/val
+names: [head] 

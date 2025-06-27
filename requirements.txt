@@ -1,0 +1,8 @@
+PyQt5
+opencv-python
+pyautogui
+torch
+numpy
+mss
+ultralytics
+labelImg 
