@@ -1,0 +1,38 @@
+# Body Part Detection Dataset Configuration
+# Update these paths to point to your actual training and validation data directories
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+# Number of classes (12 body parts + 1 person class)
+nc: 13
+
+# Class names for body part detection
+names: [
+  'head',      # 0 - Head (nose, eyes, ears)
+  'face',      # 1 - Face (facial features)
+  'torso',     # 2 - Torso (shoulders and hips)
+  'left_arm',  # 3 - Left arm (shoulder to wrist)
+  'right_arm', # 4 - Right arm (shoulder to wrist)
+  'left_leg',  # 5 - Left leg (hip to ankle)
+  'right_leg', # 6 - Right leg (hip to ankle)
+  'left_hand', # 7 - Left hand
+  'right_hand',# 8 - Right hand
+  'left_foot', # 9 - Left foot
+  'right_foot',# 10 - Right foot
+  'body',      # 11 - Full body outline
+  'person'     # 12 - Full person detection
+]
+
+# Dataset info
+dataset_type: body_part_detection
+description: Custom body part detection dataset for human pose estimation
+version: 1.0
+license: MIT
+author: GLFPS Team
+
+# Training parameters (optional, can be overridden in GUI)
+default_epochs: 100
+default_batch_size: 16
+default_image_size: 640
+default_learning_rate: 0.01 
