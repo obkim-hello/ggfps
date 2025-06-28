@@ -71,24 +71,13 @@ Example:
 
 ## 🏷️ Annotation Process
 
-### Option 1: Using labelImg (Recommended)
+### Using labelImg (Recommended)
 1. Click "Annotate Data (labelImg)" in the Training tab
 2. Select your images directory
 3. Use labelImg to draw bounding boxes around body parts
 4. Save annotations in YOLO format
 
-### Option 2: In-App Annotation
-1. Click "In-App Annotate" in the Training tab
-2. Select an image to annotate
-3. Draw bounding boxes by clicking and dragging
-4. Press 'S' to save annotations
-
-### Option 3: Video Frame Extraction
-1. Click "Extract Frames from Video"
-2. Select your video file
-3. Choose output directory
-4. Set frame interval (e.g., every 30 frames)
-5. Annotate the extracted frames
+**Installation**: `pip install labelImg`
 
 ## ⚙️ Training Configuration
 
@@ -124,8 +113,8 @@ Choose from available YOLOv8 models:
 ## 🚀 Training Process
 
 ### 1. Setup Data Configuration
-1. Click "Create Body Part data.yaml" or select existing file
-2. Verify class names and paths are correct
+1. Prepare your dataset in the required directory structure
+2. Create or select a `data.yaml` file with your class definitions
 3. Ensure training/validation directories exist
 
 ### 2. Start Training

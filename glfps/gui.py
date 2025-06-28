@@ -1,15 +1,22 @@
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QInputDialog, QMessageBox, QLineEdit, QTextEdit, QComboBox, QHBoxLayout, QGridLayout, QCheckBox
-from PyQt5.QtCore import QTimer
 import sys
-import cv2
-from glfps.screen_capture import ScreenCapture
-from glfps.detection import DetectionEngine
-from glfps.training.annotator import Annotator
-import subprocess
-from mss import mss
-import numpy as np
 import os
 import platform
+import subprocess
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QHBoxLayout, QPushButton, QLabel, QComboBox, 
+                             QCheckBox, QGridLayout, QTextEdit, QFileDialog,
+                             QMessageBox, QTabWidget, QProgressBar, QSpinBox,
+                             QDoubleSpinBox, QGroupBox, QLineEdit)
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
+from PyQt5.QtGui import QImage, QPixmap
+import cv2
+import numpy as np
+
+# Import our modules
+from glfps.detection import DetectionEngine
+from glfps.screen_capture import ScreenCapture
+from glfps.automation import Automation
+from glfps.training.annotator import Annotator
 
 def launch_gui():
     app = QApplication(sys.argv)
@@ -33,41 +40,52 @@ class DetectionTab(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
-        self.label = QLabel("Live Detection: Select model and start")
-        layout.addWidget(self.label)
-        self.model_select = QComboBox()
-        self.model_select.addItems([
-            "yolov8n-pose.pt",  # Default pose model for body parts
-            "yolov8s-pose.pt", 
-            "yolov8m-pose.pt",
-            "yolov8l-pose.pt",
-            "yolov8n.pt",       # Regular detection models
-            "yolov8s.pt",
-            "yolov8m.pt",
-            "yolov8l.pt",
-            "runs/detect/train8/weights/best.pt"  # Custom trained model
-        ])
-        self.model_select.currentTextChanged.connect(self.change_model)
-        layout.addWidget(QLabel("Detection Model:"))
-        layout.addWidget(self.model_select)
+        
+        # Title
+        title = QLabel("Real-time Body Part Detection")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
+        layout.addWidget(title)
+        
+        # Model selection
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["yolov8n-pose.pt", "yolov8s-pose.pt", "yolov8m-pose.pt", "yolov8l-pose.pt", "yolov8x-pose.pt"])
+        self.model_combo.currentTextChanged.connect(self.change_model)
+        model_layout.addWidget(self.model_combo)
+        
+        # Model file picker
+        self.model_picker_btn = QPushButton("Browse Model")
+        self.model_picker_btn.clicked.connect(self.pick_model_file)
+        model_layout.addWidget(self.model_picker_btn)
+        
+        layout.addLayout(model_layout)
         
         # Monitor selection
-        self.sct = mss()
-        self.monitor_select = QComboBox()
-        for i, mon in enumerate(self.sct.monitors[1:], 1):
-            self.monitor_select.addItem(f"Monitor {i}: {mon['width']}x{mon['height']}", i)
-        self.monitor_select.currentIndexChanged.connect(self.change_monitor)
-        layout.addWidget(QLabel("Screen to Record:"))
-        layout.addWidget(self.monitor_select)
+        monitor_layout = QHBoxLayout()
+        monitor_layout.addWidget(QLabel("Monitor:"))
+        self.monitor_combo = QComboBox()
+        self.monitor_combo.addItems(["Primary", "Secondary", "All"])
+        self.monitor_combo.currentTextChanged.connect(self.change_monitor)
+        monitor_layout.addWidget(self.monitor_combo)
         
-        # Detection mode for live detection
-        self.detection_mode = QComboBox()
-        self.detection_mode.addItems(["All Body Parts", "Person Only", "Custom Selection"])
-        self.detection_mode.currentTextChanged.connect(self.on_detection_mode_changed)
-        layout.addWidget(QLabel("Detection Mode:"))
-        layout.addWidget(self.detection_mode)
+        # FPS control
+        monitor_layout.addWidget(QLabel("FPS:"))
+        self.fps_spinbox = QSpinBox()
+        self.fps_spinbox.setRange(1, 30)
+        self.fps_spinbox.setValue(10)  # Default to 10 FPS for better performance
+        self.fps_spinbox.valueChanged.connect(self.change_fps)
+        monitor_layout.addWidget(self.fps_spinbox)
         
-        # Body part selection (for custom mode)
+        # Screen capture test button
+        self.test_capture_btn = QPushButton("Test Capture")
+        self.test_capture_btn.clicked.connect(self.test_screen_capture)
+        monitor_layout.addWidget(self.test_capture_btn)
+        
+        layout.addLayout(monitor_layout)
+        
+        # Body part selection
+        layout.addWidget(QLabel("Select Body Parts to Detect:"))
         self.body_part_checkboxes = {}
         body_parts = ['head', 'face', 'torso', 'left_arm', 'right_arm', 'left_leg', 'right_leg', 
                      'left_hand', 'right_hand', 'left_foot', 'right_foot', 'body']
@@ -75,24 +93,57 @@ class DetectionTab(QWidget):
         checkbox_layout = QGridLayout()
         for i, part in enumerate(body_parts):
             checkbox = QCheckBox(part.replace('_', ' ').title())
-            checkbox.setChecked(True)
-            checkbox.setEnabled(False)  # Disabled by default
+            checkbox.setChecked(True)  # Default to all checked
             self.body_part_checkboxes[part] = checkbox
             checkbox_layout.addWidget(checkbox, i // 3, i % 3)
         
-        layout.addWidget(QLabel("Body Parts (Custom Mode):"))
         layout.addLayout(checkbox_layout)
         
+        # Detection mode
+        self.detection_mode = QComboBox()
+        self.detection_mode.addItems(["All Body Parts", "Person Only", "Custom Selection"])
+        self.detection_mode.currentTextChanged.connect(self.on_detection_mode_changed)
+        layout.addWidget(QLabel("Detection Mode:"))
+        layout.addWidget(self.detection_mode)
+        
+        # Control buttons
+        button_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start Detection")
         self.start_btn.clicked.connect(self.toggle_detection)
-        layout.addWidget(self.start_btn)
-        self.setLayout(layout)
+        button_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("Stop Detection")
+        self.stop_btn.clicked.connect(self.toggle_detection)
+        self.stop_btn.setEnabled(False)
+        button_layout.addWidget(self.stop_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # Status and debug info
+        self.status_label = QLabel("Status: Ready")
+        layout.addWidget(self.status_label)
+        
+        # Debug info for macOS
+        if platform.system() == 'Darwin':
+            self.debug_label = QLabel("macOS Debug: Check permissions for screen recording")
+            self.debug_label.setStyleSheet("color: orange; font-size: 12px;")
+            layout.addWidget(self.debug_label)
+        
+        # Video display
+        self.video_label = QLabel()
+        self.video_label.setMinimumSize(640, 480)
+        self.video_label.setStyleSheet("border: 2px solid gray; background-color: black;")
+        layout.addWidget(self.video_label)
+        
+        # Initialize components
+        self.screen_capture = None
+        self.detector = None
+        self.is_detecting = False
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
-        self.capturing = False
-        self.capture = ScreenCapture(monitor_index=self.monitor_select.currentData())
-        self.detector = DetectionEngine(model_path=self.model_select.currentText())
-        self.window_name = "Live Detection - Body Parts"
+        
+        # Set layout
+        self.setLayout(layout)
 
     def on_detection_mode_changed(self, mode):
         """Enable/disable checkboxes based on detection mode"""
@@ -111,86 +162,192 @@ class DetectionTab(QWidget):
     def change_model(self, model_path):
         try:
             self.detector = DetectionEngine(model_path=model_path)
+            self.status_label.setText(f"Status: Model loaded - {model_path}")
         except Exception as e:
+            self.status_label.setText(f"Status: Error loading model - {e}")
             QMessageBox.warning(self, "Model Error", f"Failed to load model: {e}")
 
-    def change_monitor(self, idx):
-        monitor_index = self.monitor_select.itemData(idx)
-        if monitor_index is not None:
-            self.capture.set_monitor(monitor_index)
+    def change_monitor(self, monitor_name):
+        """Change the monitor to capture."""
+        try:
+            if monitor_name == "Primary":
+                monitor_index = 1
+            elif monitor_name == "Secondary":
+                monitor_index = 2
+            else:  # All
+                monitor_index = 0
+            
+            self.screen_capture = ScreenCapture(monitor_index=monitor_index)
+            self.status_label.setText(f"Status: Monitor changed to {monitor_name}")
+            
+            # Test capture
+            if self.screen_capture.test_capture():
+                self.status_label.setText(f"Status: Monitor {monitor_name} - Capture working")
+            else:
+                self.status_label.setText(f"Status: Monitor {monitor_name} - Capture failed")
+                
+        except Exception as e:
+            self.status_label.setText(f"Status: Error changing monitor - {e}")
+
+    def change_fps(self, fps):
+        """Change the capture frame rate."""
+        if self.screen_capture is not None:
+            self.screen_capture.set_fps(fps)
+            # Update timer interval
+            timer_interval = max(16, int(1000 / fps))  # Minimum 16ms (60 FPS max)
+            self.timer.setInterval(timer_interval)
+            self.status_label.setText(f"Status: FPS set to {fps}")
 
     def toggle_detection(self):
-        if not self.capturing:
-            self.capturing = True
-            self.start_btn.setText("Stop Detection")
-            self.timer.start(100)
+        if not self.is_detecting:
+            # Initialize components if needed
+            if self.screen_capture is None:
+                self.screen_capture = ScreenCapture(monitor_index=1, max_fps=self.fps_spinbox.value())
+            
+            if self.detector is None:
+                try:
+                    self.detector = DetectionEngine(model_path=self.model_combo.currentText())
+                except Exception as e:
+                    QMessageBox.warning(self, "Model Error", f"Failed to load model: {e}")
+                    return
+            
+            # Test capture before starting
+            if not self.screen_capture.test_capture():
+                QMessageBox.warning(self, "Capture Error", "Screen capture is not working. Please check permissions.")
+                return
+            
+            self.is_detecting = True
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.status_label.setText("Status: Detection running...")
+            
+            # Set timer interval based on FPS
+            fps = self.fps_spinbox.value()
+            timer_interval = max(16, int(1000 / fps))  # Minimum 16ms (60 FPS max)
+            self.timer.start(timer_interval)
         else:
-            self.capturing = False
-            self.start_btn.setText("Start Detection")
+            self.is_detecting = False
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.status_label.setText("Status: Detection stopped")
             self.timer.stop()
-            cv2.destroyWindow(self.window_name)
+            cv2.destroyAllWindows()
 
     def update_frame(self):
-        frame = self.capture.get_frame()
-        if frame is None or frame.size == 0:
-            self.timer.stop()
-            self.start_btn.setText("Start Detection")
-            cv2.destroyWindow(self.window_name)
-            QMessageBox.warning(self, "Screen Capture Error", "Failed to capture screen frame.")
+        if not self.is_detecting or self.screen_capture is None or self.detector is None:
             return
         
-        # Get detection mode and target parts
-        mode = self.detection_mode.currentText()
-        if mode == "All Body Parts":
-            detections = self.detector.detect(frame)
-        elif mode == "Person Only":
-            detections = [d for d in self.detector.detect(frame) if d["label"] == "person"]
-        else:  # Custom Selection
-            target_parts = [part for part, checkbox in self.body_part_checkboxes.items() 
-                          if checkbox.isChecked()]
-            detections = self.detector.detect_specific_parts(frame, target_parts)
+        frame = self.screen_capture.get_frame()
+        if frame is None or frame.size == 0:
+            self.status_label.setText("Status: Capture failed - check permissions")
+            return
         
-        # Color mapping for different body parts
-        colors = {
-            'head': (255, 0, 0),      # Blue
-            'face': (255, 0, 255),    # Magenta
-            'torso': (0, 255, 0),     # Green
-            'left_arm': (255, 165, 0), # Orange
-            'right_arm': (255, 165, 0), # Orange
-            'left_leg': (128, 0, 128), # Purple
-            'right_leg': (128, 0, 128), # Purple
-            'left_hand': (0, 255, 255), # Yellow
-            'right_hand': (0, 255, 255), # Yellow
-            'left_foot': (165, 42, 42), # Brown
-            'right_foot': (165, 42, 42), # Brown
-            'body': (0, 255, 0),      # Green
-            'person': (0, 255, 0)     # Green
-        }
+        try:
+            # Resize frame for faster processing (optional)
+            height, width = frame.shape[:2]
+            if width > 1280:  # Resize if too large for performance
+                scale = 1280 / width
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                frame = cv2.resize(frame, (new_width, new_height))
+            
+            # Get detection mode and target parts
+            mode = self.detection_mode.currentText()
+            if mode == "All Body Parts":
+                detections = self.detector.detect(frame)
+            elif mode == "Person Only":
+                detections = [d for d in self.detector.detect(frame) if d["label"] == "person"]
+            else:  # Custom Selection
+                target_parts = [part for part, checkbox in self.body_part_checkboxes.items() 
+                              if checkbox.isChecked()]
+                detections = self.detector.detect_specific_parts(frame, target_parts)
+            
+            # Color mapping for different body parts
+            colors = {
+                'head': (255, 0, 0),      # Blue
+                'face': (255, 0, 255),    # Magenta
+                'torso': (0, 255, 0),     # Green
+                'left_arm': (255, 165, 0), # Orange
+                'right_arm': (255, 165, 0), # Orange
+                'left_leg': (128, 0, 128), # Purple
+                'right_leg': (128, 0, 128), # Purple
+                'left_hand': (0, 255, 255), # Yellow
+                'right_hand': (0, 255, 255), # Yellow
+                'left_foot': (165, 42, 42), # Brown
+                'right_foot': (165, 42, 42), # Brown
+                'body': (0, 255, 0),      # Green
+                'person': (0, 255, 0)     # Green
+            }
+            
+            # Draw detections
+            for det in detections:
+                x, y, w, h = det["bbox"]
+                label = det["label"]
+                conf = det["confidence"]
+                det_type = det.get("type", "unknown")
+                
+                # Get color for this body part
+                color = colors.get(label, (0, 255, 0))
+                
+                # Draw bounding box
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                
+                # Draw label with confidence
+                label_text = f"{label.replace('_', ' ').title()} {int(conf * 100)}%"
+                cv2.putText(frame, label_text, (x, y - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                
+                # Add type indicator
+                if det_type == "body_part":
+                    cv2.circle(frame, (x + w - 5, y + 5), 3, (255, 255, 255), -1)
+            
+            # Convert frame to Qt format for display (only if needed)
+            if hasattr(self, 'video_label') and self.video_label.isVisible():
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_frame.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                
+                # Scale image to fit label while maintaining aspect ratio
+                scaled_image = qt_image.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.video_label.setPixmap(QPixmap.fromImage(scaled_image))
+            
+            # Show in OpenCV window for debugging
+            cv2.imshow("Live Detection - Body Parts", frame)
+            cv2.waitKey(1)
+            
+        except Exception as e:
+            self.status_label.setText(f"Status: Detection error - {e}")
+
+    def pick_model_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "PyTorch Model (*.pt)")
+        if path:
+            self.model_combo.setCurrentText(path)
+            self.change_model(path)
+
+    def test_screen_capture(self):
+        """Test screen capture functionality."""
+        if self.screen_capture is None:
+            self.screen_capture = ScreenCapture(monitor_index=1, max_fps=self.fps_spinbox.value())
         
-        # Draw detections
-        for det in detections:
-            x, y, w, h = det["bbox"]
-            label = det["label"]
-            conf = det["confidence"]
-            det_type = det.get("type", "unknown")
-            
-            # Get color for this body part
-            color = colors.get(label, (0, 255, 0))
-            
-            # Draw bounding box
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            
-            # Draw label with confidence
-            label_text = f"{label.replace('_', ' ').title()} {int(conf * 100)}%"
-            cv2.putText(frame, label_text, (x, y - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
-            # Add type indicator for body parts
-            if det_type == "body_part":
-                cv2.circle(frame, (x + w - 5, y + 5), 3, (255, 255, 255), -1)
+        frame = self.screen_capture.get_frame()
+        if frame is None or frame.size == 0:
+            QMessageBox.warning(self, "Screen Capture Error", 
+                              "Failed to capture screen frame.\n\n"
+                              "On macOS, make sure to:\n"
+                              "1. Grant screen recording permissions in System Preferences > Security & Privacy\n"
+                              "2. Restart the application after granting permissions")
+            return
         
-        cv2.imshow(self.window_name, frame)
-        cv2.waitKey(1)
+        # Show test capture
+        cv2.imshow("Test Capture", frame)
+        cv2.waitKey(3000)  # Show for 3 seconds
+        cv2.destroyWindow("Test Capture")
+        
+        QMessageBox.information(self, "Capture Test", 
+                              f"Screen capture working!\n"
+                              f"Frame size: {frame.shape[1]}x{frame.shape[0]}\n"
+                              f"FPS: {self.fps_spinbox.value()}")
 
 class TrainingTab(QWidget):
     def __init__(self):
@@ -204,14 +361,6 @@ class TrainingTab(QWidget):
         self.annotate_btn.clicked.connect(self.launch_annotator)
         layout.addWidget(self.annotate_btn)
         
-        self.inapp_annotate_btn = QPushButton("In-App Annotate")
-        self.inapp_annotate_btn.clicked.connect(self.launch_inapp_annotator)
-        layout.addWidget(self.inapp_annotate_btn)
-        
-        self.extract_frames_btn = QPushButton("Extract Frames from Video")
-        self.extract_frames_btn.clicked.connect(self.extract_frames)
-        layout.addWidget(self.extract_frames_btn)
-        
         self.current_file_label = QLabel("Current file: None")
         layout.addWidget(self.current_file_label)
         
@@ -223,11 +372,6 @@ class TrainingTab(QWidget):
         layout.addWidget(self.select_data_yaml_btn)
         self.data_yaml_label = QLabel(f"Data config: {self.data_yaml_path}")
         layout.addWidget(self.data_yaml_label)
-        
-        # Create data.yaml button
-        self.create_data_yaml_btn = QPushButton("Create Body Part data.yaml")
-        self.create_data_yaml_btn.clicked.connect(self.create_body_part_data_yaml)
-        layout.addWidget(self.create_data_yaml_btn)
         
         # Training configuration section
         layout.addWidget(QLabel("🎯 Training Configuration"))
@@ -303,53 +447,6 @@ class TrainingTab(QWidget):
         self.is_windows = platform.system() == 'Windows'
         self.training_process = None
 
-    def create_body_part_data_yaml(self):
-        """Create a data.yaml file for body part detection training."""
-        try:
-            # Get training data directory
-            train_dir = QFileDialog.getExistingDirectory(self, "Select Training Images Directory", "data/training/")
-            if not train_dir:
-                return
-            
-            # Get validation data directory
-            val_dir = QFileDialog.getExistingDirectory(self, "Select Validation Images Directory", "data/training/")
-            if not val_dir:
-                return
-            
-            # Body part classes
-            body_part_classes = [
-                'head', 'face', 'torso', 'left_arm', 'right_arm', 
-                'left_leg', 'right_leg', 'left_hand', 'right_hand', 
-                'left_foot', 'right_foot', 'body'
-            ]
-            
-            # Create data.yaml content
-            yaml_content = f"""# Body Part Detection Dataset Configuration
-train: {os.path.relpath(train_dir, os.path.dirname(self.data_yaml_path))}
-val: {os.path.relpath(val_dir, os.path.dirname(self.data_yaml_path))}
-
-# Number of classes
-nc: {len(body_part_classes)}
-
-# Class names
-names: {body_part_classes}
-
-# Dataset info
-dataset_type: body_part_detection
-description: Custom body part detection dataset
-"""
-            
-            # Save data.yaml
-            with open(self.data_yaml_path, 'w') as f:
-                f.write(yaml_content)
-            
-            self.data_yaml_label.setText(f"Data config: {self.data_yaml_path}")
-            self.log_area.append(f"✓ Created body part data.yaml with {len(body_part_classes)} classes")
-            QMessageBox.information(self, "Success", f"Created data.yaml with {len(body_part_classes)} body part classes")
-            
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to create data.yaml: {e}")
-
     def select_data_yaml(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select data.yaml", "data/training/", "YAML Files (*.yaml *.yml)")
         if path:
@@ -360,26 +457,10 @@ description: Custom body part detection dataset
         self.annotator.annotate(self)
         self.annotate_btn.setText("Annotation Started (see console)")
 
-    def launch_inapp_annotator(self):
-        self.annotator.in_app_annotate(self)
-
-    def extract_frames(self):
-        video_path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Videos (*.mp4 *.avi *.mov)")
-        if not video_path:
-            return
-        output_folder = QFileDialog.getExistingDirectory(self, "Select Output Folder", "data/training/")
-        if not output_folder:
-            return
-        interval, ok = QInputDialog.getInt(self, "Frame Interval", "Extract every Nth frame:", 30, 1, 1000, 1)
-        if not ok:
-            return
-        saved = self.annotator.extract_frames_from_video(video_path, output_folder, interval)
-        QMessageBox.information(self, "Extraction Complete", f"Extracted {saved} frames to {output_folder}")
-
     def start_training(self):
         """Start the training process with proper error handling and progress monitoring."""
         if not os.path.exists(self.data_yaml_path):
-            QMessageBox.warning(self, "Missing Data", "Please select or create a data.yaml file first.")
+            QMessageBox.warning(self, "Missing Data", "Please select a data.yaml file first.")
             return
         
         epochs = self.epochs_input.text()
@@ -641,20 +722,4 @@ class SettingsTab(QWidget):
         super().__init__()
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Settings (to be implemented)"))
-        self.setLayout(layout)
-
-class ScreenCapture:
-    def __init__(self, monitor_index):
-        self.sct = mss()
-        self.monitor = self.sct.monitors[monitor_index]
-
-    def get_frame(self):
-        sct_img = self.sct.grab(self.monitor)
-        frame = np.array(sct_img)
-        if frame.size == 0:
-            return None
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-        return frame
-
-    def set_monitor(self, monitor_index):
-        self.monitor = self.sct.monitors[monitor_index] 
+        self.setLayout(layout) 
